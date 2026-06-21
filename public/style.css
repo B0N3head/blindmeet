@@ -9,6 +9,7 @@
   --accent: #15823f;
   --accent-deep: #0e5b2c;
   --accent-tint: #e4f1e8;
+  --all-avail: #e48e0e;
   --danger: #b4231f;
   --radius: 6px;
   --shadow: 0 1px 2px rgba(27, 29, 34, .05), 0 6px 22px rgba(27, 29, 34, .06);
@@ -25,6 +26,7 @@ html[data-theme="dark"] {
   --accent: #2ab554;
   --accent-deep: #1fd469;
   --accent-tint: #0c2116;
+  --all-avail: #f0a937;
   --danger: #f07070;
   --shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 6px 22px rgba(0, 0, 0, .35);
 }
@@ -41,6 +43,7 @@ html[data-theme="dark"] {
     --accent: #2ab554;
     --accent-deep: #1fd469;
     --accent-tint: #0c2116;
+    --all-avail: #f0a020;
     --danger: #f07070;
     --shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 6px 22px rgba(0, 0, 0, .35);
   }
@@ -156,6 +159,18 @@ h1 {
   line-height: 1.05
 }
 
+.wordmark {
+  font-size: 44px;
+  letter-spacing: -2.5px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ink)
+}
+
+.wordmark-accent {
+  color: var(--accent)
+}
+
 h2 {
   font-size: 16px;
   margin-bottom: 14px;
@@ -189,7 +204,9 @@ small {
   font-size: 13px;
   color: var(--muted);
   margin: 6px 0 22px;
-  max-width: 48ch
+  max-width: 48ch;
+  padding-left: 2px;
+  line-height: 1.4
 }
 
 input,
@@ -450,14 +467,23 @@ button:disabled {
 }
 
 .brand {
-  font-weight: 700;
-  font-size: 20px;
+  font-weight: 800;
+  font-size: 24px;
   text-decoration: none;
-  letter-spacing: -.8px;
+  letter-spacing: -1.2px;
   color: var(--ink)
 }
 
 .brand:hover {
+  color: var(--ink)
+}
+
+.brand-accent {
+  color: var(--accent);
+  transition: color .12s
+}
+
+.brand:hover .brand-accent {
   color: var(--accent-deep)
 }
 
@@ -653,6 +679,20 @@ html[data-theme="dark"] .acc-toggle:hover {
   filter: brightness(.94)
 }
 
+.cell.all-avail {
+  background-color: var(--all-avail) !important;
+  border-color: var(--all-avail) !important
+}
+
+.cell.all-avail:hover {
+  filter: brightness(.88)
+}
+
+#masterGrid {
+  padding-top: 36px;
+  padding-bottom: 36px
+}
+
 .save-notice {
   font-size: 11px;
   color: var(--accent-deep);
@@ -663,16 +703,24 @@ html[data-theme="dark"] .acc-toggle:hover {
 
 .tooltip-box {
   border: 1px solid var(--line-strong);
-  padding: 10px;
+  padding: 10px 12px;
   font-size: 11px;
   white-space: pre-line;
-  margin-bottom: 10px;
-  display: none;
+  margin-top: 10px;
   background: var(--ink);
   color: var(--paper);
   border-radius: var(--radius);
-  max-width: 340px;
   line-height: 1.6;
+  height: 90px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.tooltip-box[data-empty]::before {
+  content: 'Hover or tap a slot to see who is available at that time';
+  display: block;
+  opacity: 0.4;
+  font-style: italic;
 }
 
 .link-box {

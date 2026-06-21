@@ -296,5 +296,39 @@ app.post('/api/events/:code/admin', async (req, res) => {
   res.json({ participants: participants || [] });
 });
 
+async function cleanupExpiredEvents() {
+  const { data: events, error: fetchErr } = await supabase
+    .from('events')
+    .select('id, dates')
+    .eq('date_type', 'specific');
+
+  if (fetchErr) { console.error('Cleanup fetch error:', fetchErr.message); return; }
+  if (!events || events.length === 0) return;
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const expiredIds = [];
+
+  for (const ev of events) {
+    try {
+      const dates = decodeDates(ev.dates || []);
+      const maxDate = [...dates].sort().pop();
+      if (maxDate && maxDate < todayStr) expiredIds.push(ev.id);
+    } catch { /* skip malformed rows */ }
+  }
+
+  if (expiredIds.length === 0) return;
+
+  const { error: delErr } = await supabase
+    .from('events')
+    .delete()
+    .in('id', expiredIds);
+
+  if (delErr) console.error('Cleanup delete error:', delErr.message);
+  else console.log(`Cleanup: removed ${expiredIds.length} expired event(s)`);
+}
+
+setTimeout(cleanupExpiredEvents, 30_000);
+setInterval(cleanupExpiredEvents, 24 * 60 * 60 * 1000).unref();
+
 const PORT = process.env.PORT || 3003;
 app.listen(PORT, () => console.log(`blindmeet up @ http://localhost:${PORT}`));

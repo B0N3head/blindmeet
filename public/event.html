@@ -18,7 +18,7 @@
 
 <body class="page-event">
   <div id="header">
-    <a href="/" class="brand">BlindMeet</a>
+    <a href="/" class="brand">Blind<span class="brand-accent">Meet</span></a>
     <span id="eventTitle"></span>
     <button class="btn-toggle" id="themeToggle" onclick="toggleTheme()"></button>
   </div>
@@ -84,10 +84,10 @@
               <span id="pCount" class="info"></span>
             </div>
             <div id="pNames" class="info" style="margin-bottom:6px;word-break:break-word"></div>
-            <p class="info" style="margin-bottom:4px">Hover a slot to see who's available.</p>
-            <div class="tooltip-box" id="tooltipBox"></div>
+            <p class="info" style="margin-bottom:4px">Hover or tap a slot to see who's available. <span style="color:var(--all-avail);font-weight:700">■</span> = everyone free</p>
             <button class="btn-sm" onclick="refreshAdmin()" style="margin-bottom:8px">Refresh</button>
             <div class="grid-wrap" id="masterGrid"></div>
+            <div class="tooltip-box" id="tooltipBox" data-empty></div>
           </div>
         </div>
       </div>
@@ -248,6 +248,9 @@
           if (opts.onHover) {
             cell.addEventListener('mouseenter', () => opts.onHover(key));
             cell.addEventListener('mouseleave', opts.onHoverEnd || (() => { }));
+          }
+          if (opts.onClick) {
+            cell.addEventListener('click', () => opts.onClick(key));
           }
           if (opts.interactive) attachDrag(cell, key);
           wrap.appendChild(cell);
@@ -413,31 +416,42 @@
       document.getElementById('pNames').textContent =
         total ? adminPeople.map(p => p.name).join(', ') : '';
 
+      const showSlotInfo = key => {
+        const names = idx[key] || [];
+        const count = names.length;
+        const [col, time] = key.split('|');
+        const absent = adminPeople.filter(p => !names.includes(p.name)).map(p => p.name);
+        let txt = fmtColHeader(col) + ' · ' + fmtTime(time) + '\n';
+        txt += count === 0
+          ? 'No one available'
+          : 'Available (' + count + '/' + total + '): ' + names.join(', ')
+          + (absent.length ? '\nUnavailable: ' + absent.join(', ') : '');
+        tooltip.textContent = txt;
+        tooltip.removeAttribute('data-empty');
+      };
+
+      const clearSlotInfo = () => {
+        tooltip.textContent = '';
+        tooltip.setAttribute('data-empty', '');
+      };
+
       const wrap = document.getElementById('masterGrid');
       wrap.innerHTML = '';
       wrap.appendChild(buildGrid(eventData.dates, slots, {
         getCellClass: () => 'master',
-        onHover: key => {
-          const names = idx[key] || [];
-          const count = names.length;
-          const col = key.split('|')[0];
-          const time = key.split('|')[1];
-          const absent = adminPeople.filter(p => !names.includes(p.name)).map(p => p.name);
-          let txt = fmtColHeader(col) + ' · ' + fmtTime(time) + '\n';
-          txt += count === 0
-            ? 'No one available'
-            : 'Available (' + count + '/' + total + '): ' + names.join(', ')
-            + (absent.length ? '\nUnavailable: ' + absent.join(', ') : '');
-          tooltip.textContent = txt;
-          tooltip.style.display = '';
-        },
-        onHoverEnd: () => { tooltip.style.display = 'none'; }
+        onHover:    showSlotInfo,
+        onHoverEnd: clearSlotInfo,
+        onClick:    showSlotInfo,
       }));
 
       wrap.querySelectorAll('.cell.master').forEach(cell => {
         const count = (idx[cell.dataset.key] || []).length;
         const ratio = total > 0 ? count / total : 0;
-        if (ratio > 0) cell.style.backgroundColor = greenFor(ratio);
+        if (ratio === 1) {
+          cell.classList.add('all-avail');
+        } else if (ratio > 0) {
+          cell.style.backgroundColor = greenFor(ratio);
+        }
       });
     }
 
