@@ -1,0 +1,58 @@
+NOTICE
+
+This project is licensed under the GNU Affero General Public License v3.0
+(AGPL-3.0). A copy of the license is included in the LICENSE file in this
+repository, and can also be found at:
+
+    https://www.gnu.org/licenses/agpl-3.0.txt
+
+In addition to the terms of the AGPL-3.0 license, the following attribution
+requirement applies to this software and any modified, forked, or derivative
+versions of it:
+
+ATTRIBUTION REQUIREMENT
+
+Any use, modification, distribution, or public/network deployment of this
+software, or any work derived from it, must include a clear and prominent
+reference to the original repository, displayed in a location reasonably
+visible to end users and/or developers interacting with the software or its
+source code. This includes, at minimum, one of the following:
+
+  - A visible credit/attribution notice in the software's user interface
+    (e.g. an "About", footer, or credits section), AND/OR
+  - A clear statement in the project's README, documentation, or source
+    code header indicating that the work is based on or derived from the
+    original repository.
+
+The reference must include:
+
+  1. The name of the original project/repository.
+  2. A direct link to the original repository:
+     https://github.com/B0N3head/blindmeet
+  3. The name(s) of the original author(s)/copyright holder(s):
+     Liam Collins/B0N3head
+
+This attribution must remain intact and reasonably prominent in all copies,
+forks, and derivative works, regardless of the extent of modification made
+to the original code.
+
+This requirement is supplementary to, and does not replace or override, any
+obligations imposed by the AGPL-3.0 license itself - including the
+requirement to make complete corresponding source code publicly available
+to all users who interact with the software over a network (see AGPL-3.0,
+Section 13).
+
+---
+
+Original work copyright (C) 2026 Liam Collins/B0N3head
+Repository: https://github.com/B0N3head/blindmeet
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+for more details.
