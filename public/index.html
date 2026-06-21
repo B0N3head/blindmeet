@@ -79,8 +79,8 @@
     </div>
 
     <div class="field">
-      <label>Admin Password <small>— keep this secret; it unlocks the full group view</small></label>
-      <input id="adminPw" type="password" placeholder="Your organizer password">
+      <label>Admin Password <small>(keep this a secret, this will show the final overall view)</small></label>
+      <input id="adminPw" type="password" placeholder="organiser password">
     </div>
 
     <button onclick="submitEvent()">Create Event &rarr;</button>
@@ -235,7 +235,7 @@
         document.getElementById('linkOut').style.display = '';
         btn.style.display = 'none';
       } catch {
-        errEl.textContent = 'Network error — try again';
+        errEl.textContent = 'Network error, please try again';
       } finally {
         btn.disabled = false;
       }

@@ -37,7 +37,7 @@
             <input id="uname" type="text" placeholder="Enter your name" autocomplete="off">
           </div>
           <div class="field">
-            <label>Password <small>(optional — locks your entry so only you can edit it)</small></label>
+            <label>Password <small>(optional, makes sure only you can edit your entry)</small></label>
             <input id="upw" type="password" placeholder="Leave blank to skip">
           </div>
           <button onclick="signIn()">Sign In</button>
@@ -59,11 +59,11 @@
       </div>
       <div class="col">
         <div id="adminPanel" class="panel">
-          <h3>Organizer View</h3>
+          <h3>Organiser View</h3>
           <p class="info" style="margin-bottom:8px">Enter the admin password to reveal the full group schedule.</p>
           <div class="field">
             <label>Admin Password</label>
-            <input id="adminPw" type="password" placeholder="Organizer password">
+            <input id="adminPw" type="password" placeholder="Organiser password">
           </div>
           <button onclick="unlockAdmin()">View Group Schedule</button>
           <div id="adminErr" class="err"></div>
@@ -127,7 +127,7 @@
 
       eventData = await res.json();
       document.getElementById('eventTitle').textContent = eventData.name;
-      document.title = eventData.name + ' — BlindMeet';
+      document.title = eventData.name + ' - BlindMeet';
       show('app');
     }
 
@@ -294,9 +294,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ availability: [...myAvail] })
         });
-        setNotice(res.ok ? 'Saved.' : 'Save failed — retrying next change');
+        setNotice(res.ok ? 'Saved.' : 'Save failed, retrying next change');
       } catch {
-        setNotice('Network error — will retry');
+        setNotice('Network error, retrying next change');
       }
       setTimeout(() => setNotice(''), 2500);
     }
