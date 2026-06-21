@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>BlindMeet - Easy Scheduling</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/codec.js"></script>
   <script>
     (function () {
       function gc(n) { return (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] }
@@ -28,25 +29,29 @@
   </div>
 
   <div id="app" style="display:none">
-    <div class="columns">
-      <div class="col">
-        <div id="signinPanel" class="panel">
-          <h3>New Member / Sign In</h3>
-          <div class="field">
-            <label>Your Name</label>
-            <input id="uname" type="text" placeholder="Enter your name" autocomplete="off">
-          </div>
-          <div class="field">
-            <label>Password <small>(optional, makes sure only you can edit your entry)</small></label>
-            <input id="upw" type="password" placeholder="Leave blank to skip">
-          </div>
-          <button onclick="signIn()">Sign In</button>
-          <div id="signinErr" class="err"></div>
-        </div>
+    <div class="accordion">
 
-        <div id="gridPanel" style="display:none">
-          <div class="panel">
-            <div class="panel-header">
+      <div class="acc-item" id="accUser">
+        <button class="acc-toggle" onclick="toggleAcc('accUser')">
+          <span id="accUserLabel">New Member / Sign In</span>
+          <span class="acc-icon">▾</span>
+        </button>
+        <div class="acc-body">
+          <div id="signinPanel">
+            <div class="field">
+              <label>Your Name</label>
+              <input id="uname" type="text" placeholder="Enter your name" autocomplete="off">
+            </div>
+            <div class="field">
+              <label>Password <small>(optional, makes sure only you can edit your entry)</small></label>
+              <input id="upw" type="password" placeholder="Leave blank to skip">
+            </div>
+            <button onclick="signIn()">Sign In</button>
+            <div id="signinErr" class="err"></div>
+          </div>
+
+          <div id="gridPanel" style="display:none">
+            <div class="panel-header" style="margin-bottom:8px">
               <strong id="greetName"></strong>
               <button class="btn-sm" onclick="signOut()">Switch User</button>
             </div>
@@ -55,34 +60,38 @@
             <div class="grid-wrap" id="myGrid"></div>
           </div>
         </div>
-
       </div>
-      <div class="col">
-        <div id="adminPanel" class="panel">
-          <h3>Organiser View</h3>
-          <p class="info" style="margin-bottom:8px">Enter the admin password to reveal the full group schedule.</p>
-          <div class="field">
-            <label>Admin Password</label>
-            <input id="adminPw" type="password" placeholder="Organiser password">
-          </div>
-          <button onclick="unlockAdmin()">View Group Schedule</button>
-          <div id="adminErr" class="err"></div>
-        </div>
 
-        <div id="masterSection" style="display:none">
-          <div class="panel">
-            <div class="panel-header">
+      <div class="acc-item" id="accAdmin">
+        <button class="acc-toggle" onclick="toggleAcc('accAdmin')">
+          <span>Organiser View</span>
+          <span class="acc-icon">▸</span>
+        </button>
+        <div class="acc-body" style="display:none">
+          <div id="adminPanel">
+            <p class="info" style="margin-bottom:8px">Enter the admin password to reveal the full group schedule.</p>
+            <div class="field">
+              <label>Admin Password</label>
+              <input id="adminPw" type="password" placeholder="Organiser password">
+            </div>
+            <button onclick="unlockAdmin()">View Group Schedule</button>
+            <div id="adminErr" class="err"></div>
+          </div>
+
+          <div id="masterSection" style="display:none">
+            <div class="panel-header" style="margin-bottom:6px">
               <strong>Group Availability</strong>
               <span id="pCount" class="info"></span>
             </div>
+            <div id="pNames" class="info" style="margin-bottom:6px;word-break:break-word"></div>
             <p class="info" style="margin-bottom:4px">Hover a slot to see who's available.</p>
             <div class="tooltip-box" id="tooltipBox"></div>
             <button class="btn-sm" onclick="refreshAdmin()" style="margin-bottom:8px">Refresh</button>
             <div class="grid-wrap" id="masterGrid"></div>
           </div>
         </div>
-
       </div>
+
     </div>
   </div>
 
@@ -115,6 +124,7 @@
     let dragging = false;
     let dragAdds = true;
     let saveTimer = null;
+    let fadeTimer = null;
 
     async function init() {
       if (!eventId) { show('notFound'); return; }
@@ -126,6 +136,7 @@
       if (!res.ok) { show('notFound'); return; }
 
       eventData = await res.json();
+      if (eventData.date_type === 'specific') eventData.dates = decodeDates(eventData.dates);
       document.getElementById('eventTitle').textContent = eventData.name;
       document.title = eventData.name + ' - BlindMeet';
       show('app');
@@ -133,6 +144,14 @@
 
     function show(id) { document.getElementById(id).style.display = ''; }
     function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+    function toggleAcc(id) {
+      const body = document.querySelector('#' + id + ' .acc-body');
+      const icon = document.querySelector('#' + id + ' .acc-icon');
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : '';
+      icon.textContent = open ? '▸' : '▾';
+    }
 
     async function signIn() {
       const name = document.getElementById('uname').value.trim();
@@ -155,9 +174,10 @@
       if (!res.ok) { err.textContent = data.error; return; }
 
       participantId = data.participant_id;
-      myAvail = new Set(data.availability || []);
+      myAvail = new Set(decodeAvailability(data.availability || [], eventData.start_hour, eventData.end_hour));
 
       document.getElementById('greetName').textContent = name;
+      document.getElementById('accUserLabel').textContent = name + ' - Availability';
       hide('signinPanel');
       show('gridPanel');
       renderMyGrid();
@@ -169,6 +189,7 @@
       document.getElementById('uname').value = '';
       document.getElementById('upw').value = '';
       document.getElementById('signinErr').textContent = '';
+      document.getElementById('accUserLabel').textContent = 'New Member / Sign In';
       hide('gridPanel');
       show('signinPanel');
     }
@@ -202,7 +223,7 @@
     function buildGrid(cols, slots, opts) {
       const wrap = document.createElement('div');
       wrap.className = 'grid';
-      wrap.style.gridTemplateColumns = '52px repeat(' + cols.length + ', minmax(28px,1fr))';
+      wrap.style.gridTemplateColumns = '52px repeat(' + cols.length + ', minmax(min-content,1fr))';
       wrap.appendChild(Object.assign(document.createElement('div'), { className: 'g-corner' }));
       cols.forEach(col => {
         const h = document.createElement('div');
@@ -283,7 +304,7 @@
     function scheduleSave() {
       clearTimeout(saveTimer);
       setNotice('Saving...');
-      saveTimer = setTimeout(saveNow, 400);
+      saveTimer = setTimeout(saveNow, 1000);
     }
 
     async function saveNow() {
@@ -292,16 +313,40 @@
         const res = await fetch('/api/participants/' + participantId + '/availability', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ availability: [...myAvail] })
+          body: JSON.stringify({ availability: encodeAvailability([...myAvail], eventData.start_hour, eventData.end_hour) })
         });
-        setNotice(res.ok ? 'Saved.' : 'Save failed, retrying next change');
+        if (res.ok) {
+          setNotice('Saved.');
+          fadeOutNotice();
+        } else {
+          setNotice('Save failed, retrying next change');
+        }
       } catch {
         setNotice('Network error, retrying next change');
       }
-      setTimeout(() => setNotice(''), 2500);
     }
 
-    function setNotice(msg) { document.getElementById('saveNotice').textContent = msg; }
+    function setNotice(msg) {
+      const el = document.getElementById('saveNotice');
+      clearTimeout(fadeTimer);
+      el.style.transition = 'none';
+      el.style.opacity = '1';
+      el.textContent = msg;
+    }
+
+    function fadeOutNotice() {
+      clearTimeout(fadeTimer);
+      fadeTimer = setTimeout(() => {
+        const el = document.getElementById('saveNotice');
+        el.style.transition = 'opacity 0.5s';
+        el.style.opacity = '0';
+        fadeTimer = setTimeout(() => {
+          el.style.transition = 'none';
+          el.style.opacity = '1';
+          el.textContent = '';
+        }, 500);
+      }, 2000);
+    }
 
     async function unlockAdmin() {
       const pw = document.getElementById('adminPw').value;
@@ -323,7 +368,10 @@
 
       if (!res.ok) { err.textContent = data.error; return; }
 
-      adminPeople = data.participants;
+      adminPeople = data.participants.map(p => ({
+        name: p.name,
+        availability: decodeAvailability(p.availability || [], eventData.start_hour, eventData.end_hour)
+      }));
       hide('adminPanel');
       show('masterSection');
       renderMasterGrid();
@@ -340,7 +388,10 @@
         });
         const data = await res.json();
         if (!res.ok) { alert(data.error); return; }
-        adminPeople = data.participants;
+        adminPeople = data.participants.map(p => ({
+          name: p.name,
+          availability: decodeAvailability(p.availability || [], eventData.start_hour, eventData.end_hour)
+        }));
         renderMasterGrid();
       } catch { alert('Network error'); }
     }
@@ -359,6 +410,8 @@
 
       document.getElementById('pCount').textContent =
         total + ' participant' + (total !== 1 ? 's' : '');
+      document.getElementById('pNames').textContent =
+        total ? adminPeople.map(p => p.name).join(', ') : '';
 
       const wrap = document.getElementById('masterGrid');
       wrap.innerHTML = '';

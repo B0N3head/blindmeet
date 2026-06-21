@@ -4,8 +4,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>BlindMeet - Easy Scheduling</title>
+  <title>BlindMeet - Group scheduling made simple</title>
+  <meta name="description" content="Create a free availability poll, share the link, and find the best time for everyone - only the organiser sees the full picture.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://blindmeet.me/">
+  <meta property="og:title" content="BlindMeet - Group scheduling made simple">
+  <meta property="og:description" content="Create a free availability poll, share the link, and find the best time for everyone - only the organiser sees the full picture.">
+  <meta property="og:image" content="https://blindmeet.me/preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="BlindMeet - Group scheduling made simple">
+  <meta name="twitter:description" content="Create a free availability poll, share the link, and find the best time for everyone - only the organiser sees the full picture.">
+  <meta name="twitter:image" content="https://blindmeet.me/preview.png">
   <link rel="stylesheet" href="/style.css">
+  <script src="/codec.js"></script>
   <script>
     (function () {
       function gc(n) { return (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] }
@@ -41,7 +52,7 @@
 
     <div id="specificSection">
       <div class="field">
-        <label>Select Dates <small>(click to toggle)</small></label>
+        <label>Select Dates <small>(click or drag to select)</small></label>
         <div class="cal-nav">
           <button onclick="navCal(-1)">&#8249;</button>
           <span id="calTitle"></span>
@@ -88,6 +99,7 @@
     <div id="linkOut" style="display:none" class="link-box">
       Event created! Share this link:<br>
       <a id="eventLink" href=""></a>
+      <div id="countdown" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
     </div>
   </div>
 
@@ -113,6 +125,26 @@
     const now = new Date();
     let calY = now.getFullYear(), calM = now.getMonth();
     let selectedDates = new Set();
+    let calDragging = false;
+    let calDragAdds = true;
+
+    function calBeginDrag(key, cell) {
+      calDragging = true;
+      calDragAdds = !selectedDates.has(key);
+      calApplyDrag(key, cell);
+    }
+
+    function calApplyDrag(key, cell) {
+      if (!calDragging) return;
+      if (calDragAdds) { selectedDates.add(key); cell.classList.add('selected'); }
+      else { selectedDates.delete(key); cell.classList.remove('selected'); }
+    }
+
+    function calEndDrag() {
+      if (!calDragging) return;
+      calDragging = false;
+      renderSelectedList();
+    }
 
     function navCal(dir) {
       calM += dir;
@@ -146,11 +178,18 @@
         const cell = document.createElement('div');
         cell.className = 'cal-day' + (isPast ? ' past' : '') + (selectedDates.has(key) ? ' selected' : '');
         cell.textContent = d;
-        if (!isPast) cell.onclick = () => {
-          selectedDates.has(key) ? selectedDates.delete(key) : selectedDates.add(key);
-          cell.classList.toggle('selected');
-          renderSelectedList();
-        };
+        if (!isPast) {
+          cell.dataset.date = key;
+          cell.addEventListener('mousedown', e => { e.preventDefault(); calBeginDrag(key, cell); });
+          cell.addEventListener('mouseenter', () => calApplyDrag(key, cell));
+          cell.addEventListener('touchstart', e => { e.preventDefault(); calBeginDrag(key, cell); }, { passive: false });
+          cell.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const t = e.touches[0];
+            const el = document.elementFromPoint(t.clientX, t.clientY);
+            if (el && el.dataset.date) calApplyDrag(el.dataset.date, el);
+          }, { passive: false });
+        }
         cal.appendChild(cell);
       }
     }
@@ -205,7 +244,7 @@
 
       let dates = [];
       if (dtype === 'specific') {
-        dates = [...selectedDates].sort();
+        dates = encodeDates([...selectedDates].sort());
       } else {
         dates = [...document.querySelectorAll('input[name="day"]:checked')].map(c => c.value);
       }
@@ -234,12 +273,28 @@
         linkEl.textContent = link;
         document.getElementById('linkOut').style.display = '';
         btn.style.display = 'none';
+
+        let secs = 5;
+        const cdEl = document.getElementById('countdown');
+        cdEl.textContent = 'Redirecting in 5s…';
+        const cdTimer = setInterval(() => {
+          secs--;
+          if (secs <= 0) {
+            clearInterval(cdTimer);
+            window.location.href = link;
+          } else {
+            cdEl.textContent = 'Redirecting in ' + secs + 's…';
+          }
+        }, 1000);
       } catch {
         errEl.textContent = 'Network error, please try again';
       } finally {
         btn.disabled = false;
       }
     }
+
+    document.addEventListener('mouseup', calEndDrag);
+    document.addEventListener('touchend', calEndDrag);
 
     renderCal();
     initTimes();

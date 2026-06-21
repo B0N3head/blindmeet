@@ -16,11 +16,11 @@
 
 html[data-theme="dark"] {
   --ink: #dde0d8;
-  --ink-soft: #adb0a8;
-  --muted: #6f726e;
+  --ink-soft: #c0c3bc;
+  --muted: #96998f;
   --paper: #1e2024;
   --bg: #13151a;
-  --line: #2a2d33;
+  --line: #32363e;
   --line-strong: #dde0d8;
   --accent: #2ab554;
   --accent-deep: #1fd469;
@@ -32,11 +32,11 @@ html[data-theme="dark"] {
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) {
     --ink: #dde0d8;
-    --ink-soft: #adb0a8;
-    --muted: #6f726e;
+    --ink-soft: #c0c3bc;
+    --muted: #96998f;
     --paper: #1e2024;
     --bg: #13151a;
-    --line: #2a2d33;
+    --line: #32363e;
     --line-strong: #dde0d8;
     --accent: #2ab554;
     --accent-deep: #1fd469;
@@ -231,6 +231,16 @@ button:hover {
   color: #fff
 }
 
+html[data-theme="dark"] button:hover {
+  color: #0a1a0e
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) button:hover {
+    color: #0a1a0e
+  }
+}
+
 button:active {
   transform: translateY(1px)
 }
@@ -305,6 +315,7 @@ button:disabled {
   padding: 7px 12px;
   font-size: 13px;
   user-select: none;
+  white-space: nowrap;
   transition: border-color .12s, background .12s;
 }
 
@@ -494,6 +505,65 @@ button:disabled {
 .panel-header strong {
   font-size: 15px;
   letter-spacing: -.2px
+}
+
+.accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 10px
+}
+
+.acc-item {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden
+}
+
+.acc-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 0
+}
+
+.acc-toggle:hover {
+  background: var(--accent-tint);
+  color: var(--ink);
+  border-color: transparent
+}
+
+html[data-theme="dark"] .acc-toggle:hover {
+  color: var(--ink)
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .acc-toggle:hover {
+    color: var(--ink)
+  }
+}
+
+.acc-icon {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0
+}
+
+.acc-body {
+  padding: 16px 18px 20px;
+  border-top: 1px solid var(--line)
 }
 
 .btn-sm {
