@@ -15,38 +15,28 @@ function generateCode(len = 9) {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// Trust the first hop's X-Forwarded-For so req.ip works behind nginx/Cloudflare
 app.set('trust proxy', 1);
-
-// Hard cap on body size — prevents sending a 10 MB password to bcrypt
 app.use(express.json({ limit: '16kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Input limits ──────────────────────────────────────────────────────────────
 const LIM = {
   eventName:    200,
   password:     1000,
   participantName: 100,
   maxDates:     60,
   dateStr:      20,
-  maxSlots:     3000,  // 60 dates × 48 half-hours = 2 880 theoretical max
+  maxSlots:     3000,
   slotKey:      40,
 };
 
 function strOk(v, max) { return typeof v === 'string' && v.length > 0 && v.length <= max; }
 
-// ── Admin rate limiter (in-memory; swap for Redis in multi-instance deploys) ──
-// Keyed by "ip:eventCode". After ADMIN_MAX_FAILS bad guesses the IP is locked
-// out for LOCKOUT_MS. A correct password clears the counter immediately.
-
-const ADMIN_MAX_FAILS  = 5;
+const ADMIN_MAX_FAILS  = 4;
 const LOCKOUT_MS       = 15 * 60 * 1000; // 15 minutes
+const rlMap = new Map();
 
-const rlMap = new Map(); // key → { fails, lockedUntil, lastSeen }
-
-// Clean up idle entries every 30 minutes so the Map doesn't grow forever
 setInterval(() => {
-  const cutoff = Date.now() - 60 * 60 * 1000; // 1 hour idle = evict
+  const cutoff = Date.now() - 60 * 60 * 1000; 
   for (const [k, v] of rlMap) {
     if (v.lastSeen < cutoff) rlMap.delete(k);
   }
@@ -54,7 +44,6 @@ setInterval(() => {
 
 function rlEntry(ip, code) { return `${ip}:${code}`; }
 
-/** Returns seconds remaining in lockout, or null if the request is allowed. */
 function adminRLCheck(ip, code) {
   const e = rlMap.get(rlEntry(ip, code));
   if (!e) return null;
@@ -81,12 +70,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// Serve event page for /e/:code routes
 app.get('/e/:code', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'event.html'));
 });
-
-// ── Events ────────────────────────────────────────────────────────────────────
 
 app.post('/api/events', async (req, res) => {
   const { name, date_type, dates, start_hour, end_hour, admin_password } = req.body;
@@ -104,7 +90,6 @@ app.post('/api/events', async (req, res) => {
 
   const admin_password_hash = await bcrypt.hash(admin_password, 10);
 
-  // Generate a unique short code (collision astronomically unlikely, but retry once just in case)
   let code = generateCode();
   const { data: clash } = await supabase.from('events').select('id').eq('code', code).maybeSingle();
   if (clash) code = generateCode();
@@ -130,21 +115,17 @@ app.get('/api/events/:code', async (req, res) => {
   res.json(data);
 });
 
-// ── Participants ──────────────────────────────────────────────────────────────
-
 app.post('/api/events/:code/join', async (req, res) => {
   const { name, password } = req.body;
 
   if (!strOk(name, LIM.participantName)) return res.status(400).json({ error: 'Name is required (max 100 chars)' });
   if (password !== undefined && !strOk(password, LIM.password)) return res.status(400).json({ error: 'Invalid password' });
 
-  // Resolve code → UUID
   const { data: event } = await supabase
     .from('events').select('id').eq('code', req.params.code).single();
   if (!event) return res.status(404).json({ error: 'Event not found' });
   const eventId = event.id;
 
-  // Check if name already exists in this event
   const { data: existing } = await supabase
     .from('participants')
     .select('id, password_hash, availability')
@@ -161,7 +142,6 @@ app.post('/api/events/:code/join', async (req, res) => {
     return res.json({ participant_id: existing.id, availability: existing.availability || [] });
   }
 
-  // New participant
   const hash = password ? await bcrypt.hash(password, 10) : null;
   const { data, error } = await supabase
     .from('participants')
@@ -180,7 +160,6 @@ app.put('/api/participants/:id/availability', async (req, res) => {
   if (availability.length > LIM.maxSlots)          return res.status(400).json({ error: 'Too many slots' });
   if (availability.some(s => !strOk(s, LIM.slotKey))) return res.status(400).json({ error: 'Invalid slot key' });
 
-  // Verify the participant exists before writing — prevents arbitrary UUID writes
   const { data: participant } = await supabase
     .from('participants')
     .select('id')
@@ -198,8 +177,6 @@ app.put('/api/participants/:id/availability', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Admin ─────────────────────────────────────────────────────────────────────
-
 app.post('/api/events/:code/admin', async (req, res) => {
   const { admin_password } = req.body;
   if (!strOk(admin_password, LIM.password)) return res.status(400).json({ error: 'Password required' });
@@ -207,7 +184,6 @@ app.post('/api/events/:code/admin', async (req, res) => {
   const ip  = req.ip || 'unknown';
   const code = req.params.code;
 
-  // Rate limit check — before the DB hit so we don't burn bcrypt on locked IPs
   const secsLeft = adminRLCheck(ip, code);
   if (secsLeft !== null) {
     const mins = Math.ceil(secsLeft / 60);
@@ -240,7 +216,7 @@ app.post('/api/events/:code/admin', async (req, res) => {
     });
   }
 
-  adminRLReset(ip, code); // correct password — clear the counter
+  adminRLReset(ip, code);
 
   const { data: participants } = await supabase
     .from('participants')
@@ -250,7 +226,5 @@ app.post('/api/events/:code/admin', async (req, res) => {
   res.json({ participants: participants || [] });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`BlindMeet → http://localhost:${PORT}`));
+const PORT = process.env.PORT || 3003;
+app.listen(PORT, () => console.log(`blindmeet up @ http://localhost:${PORT}`));
