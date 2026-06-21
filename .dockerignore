@@ -1,0 +1,7 @@
+.env
+node_modules/
+new style/
+.git/
+.gitignore
+*.md
+setup.sql

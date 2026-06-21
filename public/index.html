@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BlindMeet - Easy Scheduling</title>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    (function () {
+      function gc(n) { return (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] }
+      var saved = gc('bm_theme'), sys = matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', saved || sys);
+    })();
+  </script>
+</head>
+
+<body class="page-create">
+
+  <div id="header">
+    <h1 style="font-size:26px;letter-spacing:-1px">BlindMeet</h1>
+    <button class="btn-toggle" id="themeToggle" onclick="toggleTheme()"></button>
+  </div>
+  <p class="tagline">Group scheduling made simple</p>
+
+  <div class="box">
+    <h2>Create New Event</h2>
+
+    <div class="field">
+      <label>Event Name</label>
+      <input id="eventName" type="text" placeholder="e.g. Team Meeting, Weekend Hike, etc">
+    </div>
+
+    <div class="field">
+      <label>Schedule Type</label>
+      <div class="radio-row">
+        <label><input type="radio" name="dtype" value="specific" checked> Specific Dates</label>
+        <label><input type="radio" name="dtype" value="days"> Days of Week</label>
+      </div>
+    </div>
+
+    <div id="specificSection">
+      <div class="field">
+        <label>Select Dates <small>(click to toggle)</small></label>
+        <div class="cal-nav">
+          <button onclick="navCal(-1)">&#8249;</button>
+          <span id="calTitle"></span>
+          <button onclick="navCal(1)">&#8250;</button>
+        </div>
+        <div id="calendar" class="calendar"></div>
+        <div id="selectedList" class="selected-list"></div>
+      </div>
+    </div>
+
+    <div id="daysSection" style="display:none">
+      <div class="field">
+        <label>Select Days</label>
+        <div class="day-checks">
+          <label><input type="checkbox" name="day" value="Sun"> Sun</label>
+          <label><input type="checkbox" name="day" value="Mon"> Mon</label>
+          <label><input type="checkbox" name="day" value="Tue"> Tue</label>
+          <label><input type="checkbox" name="day" value="Wed"> Wed</label>
+          <label><input type="checkbox" name="day" value="Thu"> Thu</label>
+          <label><input type="checkbox" name="day" value="Fri"> Fri</label>
+          <label><input type="checkbox" name="day" value="Sat"> Sat</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="field row">
+      <div class="col-half">
+        <label>Earliest Time</label>
+        <select id="startTime"></select>
+      </div>
+      <div class="col-half">
+        <label>Latest Time</label>
+        <select id="endTime"></select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Admin Password <small>— keep this secret; it unlocks the full group view</small></label>
+      <input id="adminPw" type="password" placeholder="Your organizer password">
+    </div>
+
+    <button onclick="submitEvent()">Create Event &rarr;</button>
+    <div id="createErr" class="err"></div>
+    <div id="linkOut" style="display:none" class="link-box">
+      Event created! Share this link:<br>
+      <a id="eventLink" href=""></a>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    function toggleTheme() {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      document.cookie = 'bm_theme=' + next + ';max-age=31536000;path=/;SameSite=Lax';
+      syncToggleLabel();
+    }
+
+    function syncToggleLabel() {
+      const btn = document.getElementById('themeToggle');
+      if (btn) btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀ Light' : '☾ Dark';
+    }
+
+    syncToggleLabel();
+
+    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    const now = new Date();
+    let calY = now.getFullYear(), calM = now.getMonth();
+    let selectedDates = new Set();
+
+    function navCal(dir) {
+      calM += dir;
+      if (calM > 11) { calM = 0; calY++; }
+      if (calM < 0) { calM = 11; calY--; }
+      renderCal();
+    }
+
+    function renderCal() {
+      document.getElementById('calTitle').textContent = MONTHS[calM] + ' ' + calY;
+      const cal = document.getElementById('calendar');
+      cal.innerHTML = '';
+
+      ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].forEach(d => {
+        const h = document.createElement('div');
+        h.className = 'cal-head';
+        h.textContent = d;
+        cal.appendChild(h);
+      });
+
+      const firstDay = new Date(calY, calM, 1).getDay();
+      const daysInMonth = new Date(calY, calM + 1, 0).getDate();
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+
+      for (let i = 0; i < firstDay; i++) cal.appendChild(document.createElement('div'));
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(calY, calM, d);
+        const key = fmtDate(date);
+        const isPast = date < today;
+        const cell = document.createElement('div');
+        cell.className = 'cal-day' + (isPast ? ' past' : '') + (selectedDates.has(key) ? ' selected' : '');
+        cell.textContent = d;
+        if (!isPast) cell.onclick = () => {
+          selectedDates.has(key) ? selectedDates.delete(key) : selectedDates.add(key);
+          cell.classList.toggle('selected');
+          renderSelectedList();
+        };
+        cal.appendChild(cell);
+      }
+    }
+
+    function fmtDate(d) {
+      return d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0');
+    }
+
+    function renderSelectedList() {
+      const sorted = [...selectedDates].sort();
+      document.getElementById('selectedList').textContent =
+        sorted.length ? 'Selected: ' + sorted.join(', ') : '';
+    }
+
+    function fmtHour(h) {
+      if (h === 0) return '12:00 AM';
+      if (h < 12) return h + ':00 AM';
+      if (h === 12) return '12:00 PM';
+      return (h - 12) + ':00 PM';
+    }
+
+    function initTimes() {
+      const st = document.getElementById('startTime');
+      const et = document.getElementById('endTime');
+      for (let h = 0; h <= 23; h++) {
+        st.innerHTML += `<option value="${h}">${fmtHour(h)}</option>`;
+      }
+      for (let h = 1; h <= 24; h++) {
+        const label = h === 24 ? '11:59 PM' : fmtHour(h);
+        et.innerHTML += `<option value="${h}">${label}</option>`;
+      }
+      st.value = 9;
+      et.value = 17;
+    }
+
+    document.querySelectorAll('input[name="dtype"]').forEach(r => {
+      r.addEventListener('change', () => {
+        document.getElementById('specificSection').style.display = r.value === 'specific' ? '' : 'none';
+        document.getElementById('daysSection').style.display = r.value === 'days' ? '' : 'none';
+      });
+    });
+
+    async function submitEvent() {
+      const name = document.getElementById('eventName').value.trim();
+      const admin_password = document.getElementById('adminPw').value;
+      const dtype = document.querySelector('input[name="dtype"]:checked').value;
+      const start_hour = parseInt(document.getElementById('startTime').value);
+      const end_hour = parseInt(document.getElementById('endTime').value);
+      const errEl = document.getElementById('createErr');
+
+      let dates = [];
+      if (dtype === 'specific') {
+        dates = [...selectedDates].sort();
+      } else {
+        dates = [...document.querySelectorAll('input[name="day"]:checked')].map(c => c.value);
+      }
+
+      errEl.textContent = '';
+      if (!name) return (errEl.textContent = 'Event name is required');
+      if (!dates.length) return (errEl.textContent = 'Select at least one date or day');
+      if (!admin_password) return (errEl.textContent = 'Admin password is required');
+      if (start_hour >= end_hour) return (errEl.textContent = 'End time must be after start time');
+
+      const btn = document.querySelector('button[onclick="submitEvent()"]');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, date_type: dtype, dates, start_hour, end_hour, admin_password })
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error; return; }
+
+        const link = window.location.origin + '/e/' + data.code;
+        const linkEl = document.getElementById('eventLink');
+        linkEl.href = link;
+        linkEl.textContent = link;
+        document.getElementById('linkOut').style.display = '';
+        btn.style.display = 'none';
+      } catch {
+        errEl.textContent = 'Network error — try again';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    renderCal();
+    initTimes();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BlindMeet - Easy Scheduling</title>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    (function () {
+      function gc(n) { return (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] }
+      var saved = gc('bm_theme'), sys = matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', saved || sys);
+    })();
+  </script>
+</head>
+
+<body class="page-event">
+  <div id="header">
+    <a href="/" class="brand">BlindMeet</a>
+    <span id="eventTitle"></span>
+    <button class="btn-toggle" id="themeToggle" onclick="toggleTheme()"></button>
+  </div>
+
+  <div id="notFound" style="display:none" class="box">
+    <p>Event not found or link is invalid.</p>
+    <p><a href="/">Create a new event</a></p>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="columns">
+      <div class="col">
+        <div id="signinPanel" class="panel">
+          <h3>New Member / Sign In</h3>
+          <div class="field">
+            <label>Your Name</label>
+            <input id="uname" type="text" placeholder="Enter your name" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Password <small>(optional — locks your entry so only you can edit it)</small></label>
+            <input id="upw" type="password" placeholder="Leave blank to skip">
+          </div>
+          <button onclick="signIn()">Sign In</button>
+          <div id="signinErr" class="err"></div>
+        </div>
+
+        <div id="gridPanel" style="display:none">
+          <div class="panel">
+            <div class="panel-header">
+              <strong id="greetName"></strong>
+              <button class="btn-sm" onclick="signOut()">Switch User</button>
+            </div>
+            <div class="save-notice" id="saveNotice"></div>
+            <p class="info">Click and drag to mark your availability. Green = available.</p>
+            <div class="grid-wrap" id="myGrid"></div>
+          </div>
+        </div>
+
+      </div>
+      <div class="col">
+        <div id="adminPanel" class="panel">
+          <h3>Organizer View</h3>
+          <p class="info" style="margin-bottom:8px">Enter the admin password to reveal the full group schedule.</p>
+          <div class="field">
+            <label>Admin Password</label>
+            <input id="adminPw" type="password" placeholder="Organizer password">
+          </div>
+          <button onclick="unlockAdmin()">View Group Schedule</button>
+          <div id="adminErr" class="err"></div>
+        </div>
+
+        <div id="masterSection" style="display:none">
+          <div class="panel">
+            <div class="panel-header">
+              <strong>Group Availability</strong>
+              <span id="pCount" class="info"></span>
+            </div>
+            <p class="info" style="margin-bottom:4px">Hover a slot to see who's available.</p>
+            <div class="tooltip-box" id="tooltipBox"></div>
+            <button class="btn-sm" onclick="refreshAdmin()" style="margin-bottom:8px">Refresh</button>
+            <div class="grid-wrap" id="masterGrid"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    function toggleTheme() {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      document.cookie = 'bm_theme=' + next + ';max-age=31536000;path=/;SameSite=Lax';
+      syncToggleLabel();
+      if (adminPeople && document.getElementById('masterSection').style.display !== 'none') {
+        renderMasterGrid();
+      }
+    }
+
+    function syncToggleLabel() {
+      const btn = document.getElementById('themeToggle');
+      if (btn) btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀ Light' : '☾ Dark';
+    }
+
+    syncToggleLabel();
+
+    const eventId = window.location.pathname.replace('/e/', '').split('/')[0];
+    let eventData = null;
+    let participantId = null;
+    let myAvail = new Set();
+    let adminPeople = null;
+
+    let dragging = false;
+    let dragAdds = true;
+    let saveTimer = null;
+
+    async function init() {
+      if (!eventId) { show('notFound'); return; }
+
+      let res;
+      try { res = await fetch('/api/events/' + eventId); }
+      catch { show('notFound'); return; }
+
+      if (!res.ok) { show('notFound'); return; }
+
+      eventData = await res.json();
+      document.getElementById('eventTitle').textContent = eventData.name;
+      document.title = eventData.name + ' — BlindMeet';
+      show('app');
+    }
+
+    function show(id) { document.getElementById(id).style.display = ''; }
+    function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+    async function signIn() {
+      const name = document.getElementById('uname').value.trim();
+      const pw = document.getElementById('upw').value;
+      const err = document.getElementById('signinErr');
+      err.textContent = '';
+
+      if (!name) { err.textContent = 'Name is required'; return; }
+
+      let res, data;
+      try {
+        res = await fetch('/api/events/' + eventId + '/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, password: pw || undefined })
+        });
+        data = await res.json();
+      } catch { err.textContent = 'Network error'; return; }
+
+      if (!res.ok) { err.textContent = data.error; return; }
+
+      participantId = data.participant_id;
+      myAvail = new Set(data.availability || []);
+
+      document.getElementById('greetName').textContent = name;
+      hide('signinPanel');
+      show('gridPanel');
+      renderMyGrid();
+    }
+
+    function signOut() {
+      participantId = null;
+      myAvail = new Set();
+      document.getElementById('uname').value = '';
+      document.getElementById('upw').value = '';
+      document.getElementById('signinErr').textContent = '';
+      hide('gridPanel');
+      show('signinPanel');
+    }
+
+    function getSlots() {
+      const slots = [];
+      for (let h = eventData.start_hour; h < eventData.end_hour; h++) {
+        slots.push(pad(h) + ':00');
+        slots.push(pad(h) + ':30');
+      }
+      return slots;
+    }
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function slotKey(col, time) { return col + '|' + time; }
+
+    function fmtColHeader(col) {
+      if (eventData.date_type === 'days') return col;
+      const d = new Date(col + 'T00:00:00');
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      return days[d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate();
+    }
+
+    function fmtTime(t) {
+      const [h, m] = t.split(':').map(Number);
+      const ampm = h < 12 ? 'AM' : 'PM';
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      return h12 + ':' + pad(m) + ' ' + ampm;
+    }
+
+    function buildGrid(cols, slots, opts) {
+      const wrap = document.createElement('div');
+      wrap.className = 'grid';
+      wrap.style.gridTemplateColumns = '52px repeat(' + cols.length + ', minmax(28px,1fr))';
+      wrap.appendChild(Object.assign(document.createElement('div'), { className: 'g-corner' }));
+      cols.forEach(col => {
+        const h = document.createElement('div');
+        h.className = 'g-head';
+        h.textContent = fmtColHeader(col);
+        wrap.appendChild(h);
+      });
+
+      slots.forEach(slot => {
+        const isHour = slot.endsWith(':00');
+        const tl = document.createElement('div');
+        tl.className = 'g-time' + (isHour ? '' : ' half');
+        tl.textContent = isHour ? fmtTime(slot) : '';
+        wrap.appendChild(tl);
+
+        cols.forEach(col => {
+          const key = slotKey(col, slot);
+          const cell = document.createElement('div');
+          cell.className = 'cell ' + (opts.getCellClass ? opts.getCellClass(key) : '');
+          cell.dataset.key = key;
+
+          if (opts.onHover) {
+            cell.addEventListener('mouseenter', () => opts.onHover(key));
+            cell.addEventListener('mouseleave', opts.onHoverEnd || (() => { }));
+          }
+          if (opts.interactive) attachDrag(cell, key);
+          wrap.appendChild(cell);
+        });
+      });
+
+      if (opts.interactive) {
+        document.addEventListener('mouseup', endDrag);
+        document.addEventListener('touchend', endDrag);
+      }
+
+      return wrap;
+    }
+
+    function attachDrag(cell, key) {
+      cell.addEventListener('mousedown', e => { e.preventDefault(); beginDrag(key, cell); });
+      cell.addEventListener('mouseenter', () => { if (dragging) applyDrag(key, cell); });
+      cell.addEventListener('touchstart', e => { e.preventDefault(); beginDrag(key, cell); }, { passive: false });
+      cell.addEventListener('touchmove', e => {
+        e.preventDefault();
+        const t = e.touches[0];
+        const el = document.elementFromPoint(t.clientX, t.clientY);
+        if (el && el.dataset.key) applyDrag(el.dataset.key, el);
+      }, { passive: false });
+    }
+
+    function beginDrag(key, cell) {
+      dragging = true;
+      dragAdds = !myAvail.has(key);
+      applyDrag(key, cell);
+    }
+
+    function applyDrag(key, cell) {
+      if (!dragging) return;
+      if (dragAdds) { myAvail.add(key); cell.classList.add('avail'); }
+      else { myAvail.delete(key); cell.classList.remove('avail'); }
+    }
+
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      scheduleSave();
+    }
+
+    function renderMyGrid() {
+      const wrap = document.getElementById('myGrid');
+      wrap.innerHTML = '';
+      wrap.appendChild(buildGrid(eventData.dates, getSlots(), {
+        interactive: true,
+        getCellClass: key => myAvail.has(key) ? 'avail' : ''
+      }));
+    }
+
+    function scheduleSave() {
+      clearTimeout(saveTimer);
+      setNotice('Saving...');
+      saveTimer = setTimeout(saveNow, 400);
+    }
+
+    async function saveNow() {
+      if (!participantId) return;
+      try {
+        const res = await fetch('/api/participants/' + participantId + '/availability', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ availability: [...myAvail] })
+        });
+        setNotice(res.ok ? 'Saved.' : 'Save failed — retrying next change');
+      } catch {
+        setNotice('Network error — will retry');
+      }
+      setTimeout(() => setNotice(''), 2500);
+    }
+
+    function setNotice(msg) { document.getElementById('saveNotice').textContent = msg; }
+
+    async function unlockAdmin() {
+      const pw = document.getElementById('adminPw').value;
+      const err = document.getElementById('adminErr');
+      err.textContent = '';
+      if (!pw) { err.textContent = 'Enter the admin password'; return; }
+
+      let res, data;
+      // hello mr haxor, please don't spam this endpoint <3
+      // there is a server rate limit, please just don't
+      try {
+        res = await fetch('/api/events/' + eventId + '/admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ admin_password: pw })
+        });
+        data = await res.json();
+      } catch { err.textContent = 'Network error'; return; }
+
+      if (!res.ok) { err.textContent = data.error; return; }
+
+      adminPeople = data.participants;
+      hide('adminPanel');
+      show('masterSection');
+      renderMasterGrid();
+    }
+
+    async function refreshAdmin() {
+      const pw = document.getElementById('adminPw').value;
+      if (!pw) { alert('Re-enter admin password to refresh'); return; }
+      try {
+        const res = await fetch('/api/events/' + eventId + '/admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ admin_password: pw })
+        });
+        const data = await res.json();
+        if (!res.ok) { alert(data.error); return; }
+        adminPeople = data.participants;
+        renderMasterGrid();
+      } catch { alert('Network error'); }
+    }
+
+    function renderMasterGrid() {
+      const slots = getSlots();
+      const total = adminPeople.length;
+      const tooltip = document.getElementById('tooltipBox');
+      const idx = {};
+      adminPeople.forEach(p => {
+        (p.availability || []).forEach(k => {
+          if (!idx[k]) idx[k] = [];
+          idx[k].push(p.name);
+        });
+      });
+
+      document.getElementById('pCount').textContent =
+        total + ' participant' + (total !== 1 ? 's' : '');
+
+      const wrap = document.getElementById('masterGrid');
+      wrap.innerHTML = '';
+      wrap.appendChild(buildGrid(eventData.dates, slots, {
+        getCellClass: () => 'master',
+        onHover: key => {
+          const names = idx[key] || [];
+          const count = names.length;
+          const col = key.split('|')[0];
+          const time = key.split('|')[1];
+          const absent = adminPeople.filter(p => !names.includes(p.name)).map(p => p.name);
+          let txt = fmtColHeader(col) + ' · ' + fmtTime(time) + '\n';
+          txt += count === 0
+            ? 'No one available'
+            : 'Available (' + count + '/' + total + '): ' + names.join(', ')
+            + (absent.length ? '\nUnavailable: ' + absent.join(', ') : '');
+          tooltip.textContent = txt;
+          tooltip.style.display = '';
+        },
+        onHoverEnd: () => { tooltip.style.display = 'none'; }
+      }));
+
+      wrap.querySelectorAll('.cell.master').forEach(cell => {
+        const count = (idx[cell.dataset.key] || []).length;
+        const ratio = total > 0 ? count / total : 0;
+        if (ratio > 0) cell.style.backgroundColor = greenFor(ratio);
+      });
+    }
+
+    function greenFor(ratio) {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      if (isDark) {
+        const r = Math.round(30 + ratio * 12);
+        const g = Math.round(32 + ratio * 149);
+        const b = Math.round(36 + ratio * 48);
+        return `rgb(${r},${g},${b})`;
+      }
+      const r = Math.round(228 - ratio * 214);
+      const g = Math.round(241 - ratio * 150);
+      const b = Math.round(232 - ratio * 188);
+      return `rgb(${r},${g},${b})`;
+    }
+    init();
+  </script>
+</body>
+
+</html>
