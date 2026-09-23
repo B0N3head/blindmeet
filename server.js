@@ -44,7 +44,8 @@ const LIM = {
 
 const DATE_RANGE_RE = /^\d{4}-\d{2}-\d{2}\/\d+$/;
 const DAY_NAMES = new Set(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
-const AVAIL_RE = /^\d{4}-\d{2}-\d{2}:[A-Za-z0-9+/]+=*$/;
+// Key is a YYYY-MM-DD date for 'specific' events, or a day name for 'days' events
+const AVAIL_RE = /^(\d{4}-\d{2}-\d{2}|Sun|Mon|Tue|Wed|Thu|Fri|Sat):[A-Za-z0-9+/]+=*$/;
 
 const FLUSH_DELAY = 3000;
 const MAX_PENDING = 500;
