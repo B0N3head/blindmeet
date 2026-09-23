@@ -9,8 +9,12 @@ CREATE TABLE IF NOT EXISTS events (
   start_hour          INTEGER     NOT NULL CHECK (start_hour >= 0 AND start_hour <= 23),
   end_hour            INTEGER     NOT NULL CHECK (end_hour >= 1 AND end_hour <= 24),
   admin_password_hash TEXT        NOT NULL,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_activity       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration for databases created before last_activity existed
+ALTER TABLE events ADD COLUMN IF NOT EXISTS last_activity TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS participants (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,5 +34,7 @@ CREATE INDEX IF NOT EXISTS participants_event_id
 CREATE INDEX IF NOT EXISTS events_code
   ON events (code);
 
-ALTER TABLE events      DISABLE ROW LEVEL SECURITY;
-ALTER TABLE participants DISABLE ROW LEVEL SECURITY;
+-- RLS on with no policies: the anon/authenticated keys get no access at all.
+-- The server uses the service_role key, which bypasses RLS, so the app is unaffected.
+ALTER TABLE events       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE participants ENABLE ROW LEVEL SECURITY;

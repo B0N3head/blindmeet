@@ -253,6 +253,7 @@
       if (!name) return (errEl.textContent = 'Event name is required');
       if (!dates.length) return (errEl.textContent = 'Select at least one date or day');
       if (!admin_password) return (errEl.textContent = 'Admin password is required');
+      if (admin_password.length < 8) return (errEl.textContent = 'Admin password must be at least 8 characters');
       if (start_hour >= end_hour) return (errEl.textContent = 'End time must be after start time');
 
       const btn = document.querySelector('button[onclick="submitEvent()"]');

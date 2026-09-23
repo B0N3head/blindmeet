@@ -56,7 +56,7 @@
               <button class="btn-sm" onclick="signOut()">Switch User</button>
             </div>
             <div class="save-notice" id="saveNotice"></div>
-            <p class="info">Click and drag to mark your availability. Green = available.</p>
+            <p class="info" id="gridHelp">Click and drag to mark your availability. Green = available.</p>
             <div class="grid-wrap" id="myGrid"></div>
           </div>
         </div>
@@ -83,7 +83,14 @@
               <strong>Group Availability</strong>
               <span id="pCount" class="info"></span>
             </div>
-            <div id="pNames" class="info" style="margin-bottom:6px;word-break:break-word"></div>
+            <details class="people-filter" id="peopleFilter">
+              <summary>Filter people <span id="filterSummary" class="info"></span></summary>
+              <div class="filter-actions">
+                <button class="btn-sm" onclick="setAllShown(true)">All</button>
+                <button class="btn-sm" onclick="setAllShown(false)">None</button>
+              </div>
+              <div id="filterList" class="filter-list"></div>
+            </details>
             <p class="info" style="margin-bottom:4px">Hover or tap a slot to see who's available. <span style="color:var(--all-avail);font-weight:700">■</span> = everyone free</p>
             <button class="btn-sm" onclick="refreshAdmin()" style="margin-bottom:8px">Refresh</button>
             <div class="grid-wrap" id="masterGrid"></div>
@@ -140,6 +147,11 @@
       document.getElementById('eventTitle').textContent = eventData.name;
       document.title = eventData.name + ' - BlindMeet';
       show('app');
+      setNotice(idleNotice());
+      if (matchMedia('(pointer: coarse)').matches) {
+        document.getElementById('gridHelp').textContent =
+          'Tap a slot to toggle it, or press and hold then drag to paint. Swipe to scroll. Green = available.';
+      }
     }
 
     function show(id) { document.getElementById(id).style.display = ''; }
@@ -174,6 +186,7 @@
       if (!res.ok) { err.textContent = data.error; return; }
 
       participantId = data.participant_id;
+      setNotice(idleNotice());
       myAvail = new Set(decodeAvailability(data.availability || [], eventData.start_hour, eventData.end_hour));
 
       document.getElementById('greetName').textContent = name;
@@ -258,6 +271,7 @@
       });
 
       if (opts.interactive) {
+        attachTouch(wrap);
         document.addEventListener('mouseup', endDrag);
         document.addEventListener('touchend', endDrag);
       }
@@ -268,13 +282,55 @@
     function attachDrag(cell, key) {
       cell.addEventListener('mousedown', e => { e.preventDefault(); beginDrag(key, cell); });
       cell.addEventListener('mouseenter', () => { if (dragging) applyDrag(key, cell); });
-      cell.addEventListener('touchstart', e => { e.preventDefault(); beginDrag(key, cell); }, { passive: false });
-      cell.addEventListener('touchmove', e => {
-        e.preventDefault();
+    }
+
+    // Touch: swipe scrolls, tap toggles one slot, press-and-hold then drag paints
+    const HOLD_MS = 250;
+    const MOVE_TOLERANCE = 10;
+
+    function attachTouch(grid) {
+      let holdTimer = null, startPt = null, startCell = null;
+      const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; startCell = null; };
+      const stopPainting = () => { grid.classList.remove('painting'); endDrag(); };
+
+      grid.addEventListener('touchstart', e => {
+        if (e.touches.length > 1) { cancelHold(); stopPainting(); return; } // pinch zoom
+        const cell = e.target.closest('.cell');
+        if (!cell) return;
         const t = e.touches[0];
-        const el = document.elementFromPoint(t.clientX, t.clientY);
-        if (el && el.dataset.key) applyDrag(el.dataset.key, el);
+        startPt = { x: t.clientX, y: t.clientY };
+        startCell = cell;
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          grid.classList.add('painting');
+          if (navigator.vibrate) navigator.vibrate(10);
+          beginDrag(cell.dataset.key, cell);
+        }, HOLD_MS);
+      }, { passive: true });
+
+      grid.addEventListener('touchmove', e => {
+        const t = e.touches[0];
+        if (dragging) {
+          e.preventDefault();
+          const el = document.elementFromPoint(t.clientX, t.clientY);
+          if (el && el.dataset.key && grid.contains(el)) applyDrag(el.dataset.key, el);
+        } else if (holdTimer && Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) > MOVE_TOLERANCE) {
+          cancelHold(); // it's a scroll
+        }
       }, { passive: false });
+
+      grid.addEventListener('touchend', e => {
+        if (dragging) { e.preventDefault(); stopPainting(); }
+        else if (holdTimer && startCell) {
+          e.preventDefault(); // tap: suppress emulated mouse events
+          beginDrag(startCell.dataset.key, startCell);
+          endDrag();
+        }
+        cancelHold();
+      });
+
+      grid.addEventListener('touchcancel', () => { cancelHold(); stopPainting(); });
+      grid.addEventListener('contextmenu', e => { if (e.target.closest('.cell')) e.preventDefault(); });
     }
 
     function beginDrag(key, cell) {
@@ -335,6 +391,16 @@
       el.style.transition = 'none';
       el.style.opacity = '1';
       el.textContent = msg;
+      el.classList.toggle('warn', !!msg && msg === idleNotice());
+    }
+
+    // Shown in the save notice slot when nothing else is; warns about pending deletion
+    function idleNotice() {
+      if (!eventData || !eventData.archived || !eventData.delete_at) return '';
+      const when = new Date(eventData.delete_at).toLocaleString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+      });
+      return 'This event has ended and will be deleted after ' + when + '. Visiting it extends this by 24 hours.';
     }
 
     function fadeOutNotice() {
@@ -344,9 +410,7 @@
         el.style.transition = 'opacity 0.5s';
         el.style.opacity = '0';
         fadeTimer = setTimeout(() => {
-          el.style.transition = 'none';
-          el.style.opacity = '1';
-          el.textContent = '';
+          setNotice(idleNotice());
         }, 500);
       }, 2000);
     }
@@ -399,12 +463,45 @@
       } catch { alert('Network error'); }
     }
 
+    // Names the organiser has unticked; kept by name so it survives Refresh
+    const hiddenPeople = new Set();
+
+    function setAllShown(on) {
+      hiddenPeople.clear();
+      if (!on) adminPeople.forEach(p => hiddenPeople.add(p.name));
+      renderMasterGrid();
+    }
+
+    function renderFilter() {
+      const list = document.getElementById('filterList');
+      list.innerHTML = '';
+      adminPeople.forEach(p => {
+        const label = document.createElement('label');
+        label.className = 'filter-item';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !hiddenPeople.has(p.name);
+        box.addEventListener('change', () => {
+          if (box.checked) hiddenPeople.delete(p.name);
+          else hiddenPeople.add(p.name);
+          renderMasterGrid();
+        });
+        label.appendChild(box);
+        label.appendChild(document.createTextNode(p.name));
+        list.appendChild(label);
+      });
+    }
+
     function renderMasterGrid() {
       const slots = getSlots();
-      const total = adminPeople.length;
+      const people = adminPeople.filter(p => !hiddenPeople.has(p.name));
+      const total = people.length;
       const tooltip = document.getElementById('tooltipBox');
       const idx = {};
-      adminPeople.forEach(p => {
+      renderFilter();
+      document.getElementById('filterSummary').textContent =
+        hiddenPeople.size ? '(showing ' + total + ' of ' + adminPeople.length + ')' : '';
+      people.forEach(p => {
         (p.availability || []).forEach(k => {
           if (!idx[k]) idx[k] = [];
           idx[k].push(p.name);
@@ -412,15 +509,13 @@
       });
 
       document.getElementById('pCount').textContent =
-        total + ' participant' + (total !== 1 ? 's' : '');
-      document.getElementById('pNames').textContent =
-        total ? adminPeople.map(p => p.name).join(', ') : '';
+        adminPeople.length + ' participant' + (adminPeople.length !== 1 ? 's' : '');
 
       const showSlotInfo = key => {
         const names = idx[key] || [];
         const count = names.length;
         const [col, time] = key.split('|');
-        const absent = adminPeople.filter(p => !names.includes(p.name)).map(p => p.name);
+        const absent = people.filter(p => !names.includes(p.name)).map(p => p.name);
         let txt = fmtColHeader(col) + ' · ' + fmtTime(time) + '\n';
         txt += count === 0
           ? 'No one available'

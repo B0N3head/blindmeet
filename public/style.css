@@ -608,16 +608,50 @@ html[data-theme="dark"] .acc-toggle:hover {
 }
 
 .grid-wrap {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 70vh;
   margin-top: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 8px
+  background: var(--paper)
 }
 
 .grid {
   display: grid;
-  user-select: none
+  padding: 0 8px 8px 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none
+}
+
+/* Date header stays on top and time column stays on the left while the grid scrolls */
+.g-head,
+.g-corner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--paper)
+}
+
+.g-time,
+.g-corner {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--paper)
+}
+
+.g-corner {
+  z-index: 3
+}
+
+.grid.painting .cell {
+  cursor: crosshair
+}
+
+.grid.painting {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px
 }
 
 .g-corner,
@@ -655,7 +689,22 @@ html[data-theme="dark"] .acc-toggle:hover {
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   cursor: pointer;
+  touch-action: manipulation;
   transition: background .06s;
+}
+
+/* Bigger touch targets on phones/tablets */
+@media (pointer: coarse) {
+  .cell,
+  .g-time {
+    height: 26px;
+    line-height: 26px
+  }
+
+  .g-head {
+    min-width: 44px;
+    padding: 6px 4px
+  }
 }
 
 .cell:hover {
@@ -696,9 +745,13 @@ html[data-theme="dark"] .acc-toggle:hover {
 .save-notice {
   font-size: 11px;
   color: var(--accent-deep);
-  height: 16px;
+  min-height: 16px;
   margin: 4px 0;
   font-weight: 600
+}
+
+.save-notice.warn {
+  color: var(--danger)
 }
 
 .tooltip-box {
@@ -759,4 +812,43 @@ html[data-theme="dark"] .acc-toggle:hover {
     min-width: 0;
     width: 100%
   }
+}
+.people-filter {
+  margin-bottom: 8px;
+}
+
+.people-filter summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  word-break: break-word;
+}
+
+.filter-item input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
 }
