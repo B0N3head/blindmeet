@@ -194,8 +194,8 @@ app.get('/e/:code', async (req, res) => {
   ].join('\n  ');
 
   const html = eventHtml
-    .replace(/<title>[^<]*<\/title>/, `<title>${e(title)}</title>`)
-    .replace('</head>', `  ${meta}\n</head>`);
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${e(title)}</title>`)
+    .replace('</head>', () => `  ${meta}\n</head>`);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
@@ -223,7 +223,8 @@ app.post('/api/events', async (req, res) => {
     if (dates.some(d => !DAY_NAMES.has(d))) return res.status(400).json({ error: 'Invalid day name' });
   }
 
-  if (start_hour == null || end_hour == null) return res.status(400).json({ error: 'Missing time range' });
+  if (!Number.isInteger(start_hour) || !Number.isInteger(end_hour) || start_hour < 0 || end_hour > 24)
+    return res.status(400).json({ error: 'Invalid time range' });
   if (start_hour >= end_hour) {
     return res.status(400).json({ error: 'End time must be after start time' });
   }
@@ -240,7 +241,10 @@ app.post('/api/events', async (req, res) => {
     .select('code')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('Event insert failed:', error.message);
+    return res.status(500).json({ error: 'Could not create event, please try again' });
+  }
   res.json({ code: data.code });
 });
 
@@ -307,7 +311,10 @@ app.post('/api/events/:code/join', async (req, res) => {
     .select('id')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('Participant insert failed:', error.message);
+    return res.status(500).json({ error: 'Could not join event, please try again' });
+  }
   res.json({ participant_id: data.id, availability: [] });
 });
 
