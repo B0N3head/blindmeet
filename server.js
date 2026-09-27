@@ -27,14 +27,23 @@ function escHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
-
-app.set('trust proxy', 1);
+  
+// Number of reverse proxies in front of the app (or 'loopback', an IP list, etc).
+// Must match the real deployment or clients can spoof their IP via X-Forwarded-For.
+function parseTrustProxy(v) {
+  if (v === undefined || v === '') return 1;
+  if (/^\d+$/.test(v)) return Number(v);
+  if (v === 'true' || v === 'false') return v === 'true';
+  return v;
+}
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 app.use(express.json({ limit: '16kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const LIM = {
   eventName: 200,
   password: 1000,
+  adminPasswordMin: 8,
   participantName: 100,
   maxDates: 60,
   dateRangeStr: 16,
@@ -47,45 +56,108 @@ const DAY_NAMES = new Set(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
 // Key is a YYYY-MM-DD date for 'specific' events, or a day name for 'days' events
 const AVAIL_RE = /^(\d{4}-\d{2}-\d{2}|Sun|Mon|Tue|Wed|Thu|Fri|Sat):[A-Za-z0-9+/]+=*$/;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DAYS_IDLE_MS = 30 * DAY_MS;      // 'days' events: deleted after 30 days without activity
+const ARCHIVE_MS = 7 * DAY_MS;         // 'specific' events: kept 7 days after the last date
+const VIEW_EXTEND_MS = DAY_MS;         // ...and at least 24h after the most recent activity
+const TOUCH_INTERVAL = 10 * 60 * 1000; // throttle last_activity writes per event
+const lastTouch = new Map();
+
+// Records activity on an event; returns the latest activity time known in memory (ms)
+function touchEvent(eventId) {
+  const now = Date.now();
+  const prev = lastTouch.get(eventId) || 0;
+  if (now - prev < TOUCH_INTERVAL) return prev;
+  if (lastTouch.size > 10000) lastTouch.clear();
+  lastTouch.set(eventId, now);
+  supabase.from('events').update({ last_activity: new Date(now).toISOString() }).eq('id', eventId)
+    .then(({ error }) => { if (error) console.error('Activity update failed:', eventId, error.message); });
+  return now;
+}
+
+// Throws on malformed 'specific' dates
+function lifecycle(ev, activeMs = 0) {
+  const active = Math.max(Date.parse(ev.last_activity || ev.created_at) || 0, activeMs);
+  if (ev.date_type === 'days') return { archived: false, deleteAt: active + DAYS_IDLE_MS };
+  const lastDate = decodeDates(ev.dates || []).sort().pop();
+  const endsAt = Date.parse(lastDate + 'T00:00:00Z') + DAY_MS;
+  return {
+    archived: Date.now() >= endsAt,
+    deleteAt: Math.max(endsAt + ARCHIVE_MS, active + VIEW_EXTEND_MS),
+  };
+}
+
 const FLUSH_DELAY = 3000;
 const MAX_PENDING = 500;
 const pendingSaves = new Map();
 
 function strOk(v, max) { return typeof v === 'string' && v.length > 0 && v.length <= max; }
 
-const ADMIN_MAX_FAILS = 4;
+// Password guess limiting. `scope` is e.g. 'admin:<code>' or 'join:<code>'.
+// Per IP: MAX_FAILS wrong guesses, then locked out for LOCKOUT_MS.
+// Per event (all IPs combined): EVENT_MAX_FAILS wrong guesses per EVENT_WINDOW_MS,
+// so rotating IPs doesn't give unlimited guesses.
+const MAX_FAILS = 4;
 const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const EVENT_MAX_FAILS = 20;
+const EVENT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const rlMap = new Map();
+const eventFailMap = new Map();
 
 setInterval(() => {
-  const cutoff = Date.now() - 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - 60 * 60 * 1000;
   for (const [k, v] of rlMap) {
     if (v.lastSeen < cutoff) rlMap.delete(k);
   }
+  for (const [k, v] of eventFailMap) {
+    if (now - v.start >= EVENT_WINDOW_MS) eventFailMap.delete(k);
+  }
 }, 30 * 60 * 1000).unref();
 
-function rlEntry(ip, code) { return `${ip}:${code}`; }
+function rlEntry(ip, scope) { return `${ip}:${scope}`; }
 
-function adminRLCheck(ip, code) {
-  const e = rlMap.get(rlEntry(ip, code));
-  if (!e) return null;
+// Returns seconds until guessing is allowed again, or null if allowed now
+function rlCheck(ip, scope) {
   const now = Date.now();
+  const ev = eventFailMap.get(scope);
+  if (ev && now - ev.start < EVENT_WINDOW_MS && ev.count >= EVENT_MAX_FAILS)
+    return Math.ceil((ev.start + EVENT_WINDOW_MS - now) / 1000);
+
+  const e = rlMap.get(rlEntry(ip, scope));
+  if (!e) return null;
   if (e.lockedUntil && now < e.lockedUntil) return Math.ceil((e.lockedUntil - now) / 1000);
-  if (e.lockedUntil && now >= e.lockedUntil) rlMap.delete(rlEntry(ip, code)); // expired
+  if (e.lockedUntil && now >= e.lockedUntil) rlMap.delete(rlEntry(ip, scope)); // expired
   return null;
 }
 
-function adminRLFail(ip, code) {
-  const key = rlEntry(ip, code);
+// Records a wrong guess; returns guesses left for this IP before lockout
+function rlFail(ip, scope) {
+  const now = Date.now();
+  let ev = eventFailMap.get(scope);
+  if (!ev || now - ev.start >= EVENT_WINDOW_MS) ev = { count: 0, start: now };
+  ev.count++;
+  eventFailMap.set(scope, ev);
+
+  const key = rlEntry(ip, scope);
   const e = rlMap.get(key) || { fails: 0, lockedUntil: null, lastSeen: 0 };
   e.fails++;
-  e.lastSeen = Date.now();
-  e.lockedUntil = e.fails >= ADMIN_MAX_FAILS ? Date.now() + LOCKOUT_MS : null;
+  e.lastSeen = now;
+  e.lockedUntil = e.fails >= MAX_FAILS ? now + LOCKOUT_MS : null;
   rlMap.set(key, e);
-  return e.fails;
+  if (ev.count >= EVENT_MAX_FAILS) return 0;
+  return MAX_FAILS - e.fails;
 }
 
-function adminRLReset(ip, code) { rlMap.delete(rlEntry(ip, code)); }
+function rlReset(ip, scope) { rlMap.delete(rlEntry(ip, scope)); }
+
+function tooMany(res, secs) {
+  const mins = Math.ceil(secs / 60);
+  return res.status(429).json({
+    error: `Too many failed attempts. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`,
+    retryAfter: secs,
+  });
+}
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -122,8 +194,8 @@ app.get('/e/:code', async (req, res) => {
   ].join('\n  ');
 
   const html = eventHtml
-    .replace(/<title>[^<]*<\/title>/, `<title>${e(title)}</title>`)
-    .replace('</head>', `  ${meta}\n</head>`);
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${e(title)}</title>`)
+    .replace('</head>', () => `  ${meta}\n</head>`);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
@@ -134,6 +206,8 @@ app.post('/api/events', async (req, res) => {
 
   if (!strOk(name, LIM.eventName)) return res.status(400).json({ error: 'Invalid event name' });
   if (!strOk(admin_password, LIM.password)) return res.status(400).json({ error: 'Invalid admin password' });
+  if (admin_password.length < LIM.adminPasswordMin)
+    return res.status(400).json({ error: `Admin password must be at least ${LIM.adminPasswordMin} characters` });
   if (!['specific', 'days'].includes(date_type)) return res.status(400).json({ error: 'Invalid date type' });
   if (!Array.isArray(dates) || dates.length === 0) return res.status(400).json({ error: 'No dates provided' });
   if (dates.length > LIM.maxDates) return res.status(400).json({ error: 'Too many date entries' });
@@ -149,7 +223,8 @@ app.post('/api/events', async (req, res) => {
     if (dates.some(d => !DAY_NAMES.has(d))) return res.status(400).json({ error: 'Invalid day name' });
   }
 
-  if (start_hour == null || end_hour == null) return res.status(400).json({ error: 'Missing time range' });
+  if (!Number.isInteger(start_hour) || !Number.isInteger(end_hour) || start_hour < 0 || end_hour > 24)
+    return res.status(400).json({ error: 'Invalid time range' });
   if (start_hour >= end_hour) {
     return res.status(400).json({ error: 'End time must be after start time' });
   }
@@ -166,19 +241,28 @@ app.post('/api/events', async (req, res) => {
     .select('code')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('Event insert failed:', error.message);
+    return res.status(500).json({ error: 'Could not create event, please try again' });
+  }
   res.json({ code: data.code });
 });
 
 app.get('/api/events/:code', async (req, res) => {
   const { data, error } = await supabase
     .from('events')
-    .select('id, name, date_type, dates, start_hour, end_hour, code')
+    .select('id, name, date_type, dates, start_hour, end_hour, code, created_at, last_activity')
     .eq('code', req.params.code)
     .single();
 
   if (error) return res.status(404).json({ error: 'Event not found' });
-  res.json(data);
+  const { created_at, last_activity, ...event } = data;
+  try {
+    const { archived, deleteAt } = lifecycle(data, touchEvent(data.id));
+    event.archived = archived;
+    event.delete_at = new Date(deleteAt).toISOString();
+  } catch { /* malformed dates: omit lifecycle info */ }
+  res.json(event);
 });
 
 app.post('/api/events/:code/join', async (req, res) => {
@@ -191,6 +275,7 @@ app.post('/api/events/:code/join', async (req, res) => {
     .from('events').select('id').eq('code', req.params.code).single();
   if (!event) return res.status(404).json({ error: 'Event not found' });
   const eventId = event.id;
+  touchEvent(eventId);
 
   const { data: existing } = await supabase
     .from('participants')
@@ -202,8 +287,19 @@ app.post('/api/events/:code/join', async (req, res) => {
   if (existing) {
     if (existing.password_hash) {
       if (!password) return res.status(401).json({ error: 'This name is password-protected' });
+      const ip = req.ip || 'unknown';
+      const scope = 'join:' + req.params.code;
+      const secsLeft = rlCheck(ip, scope);
+      if (secsLeft !== null) return tooMany(res, secsLeft);
       const ok = await bcrypt.compare(password, existing.password_hash);
-      if (!ok) return res.status(401).json({ error: 'Wrong password' });
+      if (!ok) {
+        const remaining = rlFail(ip, scope);
+        if (remaining <= 0) return tooMany(res, rlCheck(ip, scope) ?? LOCKOUT_MS / 1000);
+        return res.status(401).json({
+          error: `Wrong password. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining before lockout.`,
+        });
+      }
+      rlReset(ip, scope);
     }
     return res.json({ participant_id: existing.id, availability: existing.availability || [] });
   }
@@ -215,7 +311,10 @@ app.post('/api/events/:code/join', async (req, res) => {
     .select('id')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('Participant insert failed:', error.message);
+    return res.status(500).json({ error: 'Could not join event, please try again' });
+  }
   res.json({ participant_id: data.id, availability: [] });
 });
 
@@ -237,11 +336,14 @@ app.put('/api/participants/:id/availability', (req, res) => {
 
   const timer = setTimeout(async () => {
     pendingSaves.delete(participantId);
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('participants')
       .update({ availability })
-      .eq('id', participantId);
+      .eq('id', participantId)
+      .select('event_id')
+      .maybeSingle();
     if (error) console.error('Deferred availability save failed:', participantId, error.message);
+    else if (data) touchEvent(data.event_id);
   }, FLUSH_DELAY);
 
   pendingSaves.set(participantId, { availability, timer });
@@ -255,14 +357,9 @@ app.post('/api/events/:code/admin', async (req, res) => {
   const ip = req.ip || 'unknown';
   const code = req.params.code;
 
-  const secsLeft = adminRLCheck(ip, code);
-  if (secsLeft !== null) {
-    const mins = Math.ceil(secsLeft / 60);
-    return res.status(429).json({
-      error: `Too many failed attempts. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`,
-      retryAfter: secsLeft,
-    });
-  }
+  const scope = 'admin:' + code;
+  const secsLeft = rlCheck(ip, scope);
+  if (secsLeft !== null) return tooMany(res, secsLeft);
 
   const { data: event } = await supabase
     .from('events')
@@ -274,20 +371,15 @@ app.post('/api/events/:code/admin', async (req, res) => {
 
   const ok = await bcrypt.compare(admin_password, event.admin_password_hash);
   if (!ok) {
-    const fails = adminRLFail(ip, code);
-    const remaining = ADMIN_MAX_FAILS - fails;
-    if (remaining <= 0) {
-      return res.status(429).json({
-        error: `Too many failed attempts. Try again in ${LOCKOUT_MS / 60000} minutes.`,
-        retryAfter: LOCKOUT_MS / 1000,
-      });
-    }
+    const remaining = rlFail(ip, scope);
+    if (remaining <= 0) return tooMany(res, rlCheck(ip, scope) ?? LOCKOUT_MS / 1000);
     return res.status(401).json({
       error: `Wrong admin password. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining before lockout.`,
     });
   }
 
-  adminRLReset(ip, code);
+  rlReset(ip, scope);
+  touchEvent(event.id);
 
   const { data: participants } = await supabase
     .from('participants')
@@ -300,20 +392,17 @@ app.post('/api/events/:code/admin', async (req, res) => {
 async function cleanupExpiredEvents() {
   const { data: events, error: fetchErr } = await supabase
     .from('events')
-    .select('id, dates')
-    .eq('date_type', 'specific');
+    .select('id, date_type, dates, created_at, last_activity');
 
   if (fetchErr) { console.error('Cleanup fetch error:', fetchErr.message); return; }
   if (!events || events.length === 0) return;
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const now = Date.now();
   const expiredIds = [];
 
   for (const ev of events) {
     try {
-      const dates = decodeDates(ev.dates || []);
-      const maxDate = [...dates].sort().pop();
-      if (maxDate && maxDate < todayStr) expiredIds.push(ev.id);
+      if (lifecycle(ev, lastTouch.get(ev.id)).deleteAt <= now) expiredIds.push(ev.id);
     } catch { /* skip malformed rows */ }
   }
 
@@ -329,7 +418,7 @@ async function cleanupExpiredEvents() {
 }
 
 setTimeout(cleanupExpiredEvents, 30_000);
-setInterval(cleanupExpiredEvents, 24 * 60 * 60 * 1000).unref();
+setInterval(cleanupExpiredEvents, 60 * 60 * 1000).unref();
 
 const PORT = process.env.PORT || 3003;
 app.listen(PORT, () => console.log(`blindmeet up @ http://localhost:${PORT}`));
